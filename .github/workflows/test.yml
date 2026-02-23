@@ -1,4 +1,5 @@
 # Test this action by running it from the same repo (uses: ./.)
+# Covers variations from .local/todo.md
 name: CI
 
 on:
@@ -8,13 +9,143 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-default:
+    name: default install
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: ./
         id: apt-bundle
+
+      - name: Verify install
+        run: |
+          curl --version
+          jq --version
+
+  test-check:
+    name: install then check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        id: install
+
+      - uses: ./
+        id: check
+        with:
+          mode: 'check'
+
+  test-validation-fail:
+    name: missing Aptfile (expect fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run action with nonexistent Aptfile
+        id: run
+        uses: ./
+        with:
+          file: 'nonexistent/Aptfile'
+        continue-on-error: true
+
+      - name: Assert validation failed
+        if: steps.run.outcome == 'failure'
+        run: echo "Validation correctly failed for missing Aptfile"
+
+      - name: Fail if action unexpectedly succeeded
+        if: steps.run.outcome == 'success'
+        run: |
+          echo "::error::Expected action to fail when Aptfile is missing"
+          exit 1
+
+  test-invalid-mode:
+    name: invalid mode (expect fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run action with invalid mode
+        id: run
+        uses: ./
+        with:
+          mode: 'invalid'
+        continue-on-error: true
+
+      - name: Assert mode validation failed
+        if: steps.run.outcome == 'failure'
+        run: echo "Validation correctly failed for invalid mode"
+
+      - name: Fail if action unexpectedly succeeded
+        if: steps.run.outcome == 'success'
+        run: |
+          echo "::error::Expected action to fail for invalid mode"
+          exit 1
+
+  test-install-no-update:
+    name: install-no-update
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        with:
+          mode: 'install-no-update'
+
+      - name: Verify install
+        run: |
+          curl --version
+          jq --version
+
+  test-cache-off:
+    name: cache disabled
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        with:
+          cache: 'false'
+
+      - name: Verify install
+        run: |
+          curl --version
+          jq --version
+
+  test-custom-file:
+    name: custom Aptfile path
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        with:
+          file: './config/Aptfile'
+
+      - name: Verify install
+        run: |
+          curl --version
+          jq --version
+
+  test-lock:
+    name: Aptfile.lock (install then --locked)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        id: first
+        name: Install from Aptfile (no lock yet)
+
+      - name: Generate Aptfile.lock
+        run: apt-bundle lock --file Aptfile
+
+      - uses: ./
+        id: second
+        name: Install from Aptfile.lock (--locked)
+        with:
+          mode: 'install-no-update'
 
       - name: Verify install
         run: |
