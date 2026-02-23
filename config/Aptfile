@@ -1,0 +1,3 @@
+# Used by CI job "test-custom-file" (file: ./config/Aptfile)
+apt curl
+apt jq

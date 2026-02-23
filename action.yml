@@ -146,4 +146,4 @@ runs:
         fi
 
         echo "Installing packages from ${{ inputs.file }}..."
-        sudo apt-bundle $ARGS
+        sudo apt-bundle install $ARGS
