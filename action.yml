@@ -1,0 +1,149 @@
+name: 'apt-bundle'
+description: 'Declarative APT package management using apt-bundle. Install from Aptfile or Aptfile.lock (when present) with caching support.'
+author: 'apt-bundle'
+branding:
+  icon: 'package'
+  color: 'orange'
+
+inputs:
+  file:
+    description: 'Path to Aptfile (Aptfile.lock in the same directory is used automatically when present)'
+    required: false
+    default: 'Aptfile'
+  mode:
+    description: 'install = update indexes and install to match Aptfile; install-no-update = install without apt-get update; check = only verify packages are installed'
+    required: false
+    default: 'install'
+  version:
+    description: 'apt-bundle version to use (e.g., "v0.1.0" or "latest")'
+    required: false
+    default: 'latest'
+  cache:
+    description: 'Enable caching of apt packages'
+    required: false
+    default: 'true'
+  cache-key-prefix:
+    description: 'Custom prefix for cache key'
+    required: false
+    default: 'apt-bundle'
+
+outputs:
+  cache-hit:
+    description: 'Whether the cache was restored'
+    value: ${{ steps.cache-apt.outputs.cache-hit }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate Aptfile exists
+      shell: bash
+      run: |
+        if [[ ! -f "${{ inputs.file }}" ]]; then
+          echo "::error::Aptfile not found at '${{ inputs.file }}'"
+          exit 1
+        fi
+
+    - name: Validate mode
+      shell: bash
+      run: |
+        case "${{ inputs.mode }}" in
+          install|install-no-update|check) ;;
+          *)
+            echo "::error::mode must be one of: install, install-no-update, check (got: ${{ inputs.mode }})"
+            exit 1
+            ;;
+        esac
+
+    - name: Prepare (resolve lock file and cache key)
+      id: prepare
+      shell: bash
+      env:
+        CACHE_KEY_PREFIX: ${{ inputs.cache-key-prefix }}
+        RUNNER_OS: ${{ runner.os }}
+        FILE: ${{ inputs.file }}
+      run: |
+        set -euo pipefail
+        DIR="$(dirname "$FILE")"
+        LOCK_PATH="${DIR}/Aptfile.lock"
+        if [[ -f "$LOCK_PATH" ]]; then
+          echo "use-locked=true" >> "$GITHUB_OUTPUT"
+          HASH_FILE="$LOCK_PATH"
+          echo "::notice::Using Aptfile.lock for reproducible installs"
+        else
+          echo "use-locked=false" >> "$GITHUB_OUTPUT"
+          HASH_FILE="$FILE"
+        fi
+        HASH=$(sha256sum "$HASH_FILE" | cut -d' ' -f1)
+        echo "cache-key=${CACHE_KEY_PREFIX}-${RUNNER_OS}-${HASH}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore apt cache
+      if: inputs.cache == 'true' && inputs.mode != 'check'
+      id: cache-apt
+      uses: actions/cache@v4
+      with:
+        path: |
+          /var/cache/apt/archives
+          !/var/cache/apt/archives/partial
+          !/var/cache/apt/archives/lock
+        key: ${{ steps.prepare.outputs.cache-key }}
+        restore-keys: |
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
+
+    - name: Download apt-bundle
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        VERSION="${{ inputs.version }}"
+        ARCH=$(dpkg --print-architecture)
+        REPO="apt-bundle/apt-bundle"
+        GITHUB_API="https://api.github.com/repos/${REPO}"
+        GITHUB_RELEASES="https://github.com/${REPO}/releases"
+
+        if [[ "$VERSION" == "latest" ]]; then
+          TAG=$(curl -s "${GITHUB_API}/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          [[ -z "$TAG" ]] && { echo "::error::Failed to fetch latest release from GitHub"; exit 1; }
+          VERSION_NUM="${TAG#v}"
+        else
+          VERSION_NUM="${VERSION#v}"
+          TAG="v${VERSION_NUM}"
+        fi
+
+        DEB_NAME="apt-bundle_${VERSION_NUM}_linux_${ARCH}.deb"
+        DOWNLOAD_URL="${GITHUB_RELEASES}/download/${TAG}/${DEB_NAME}"
+
+        echo "Downloading apt-bundle from: $DOWNLOAD_URL"
+
+        TEMP_DEB=$(mktemp --suffix=.deb)
+        curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_DEB"
+        sudo dpkg -i "$TEMP_DEB"
+        rm -f "$TEMP_DEB"
+
+        apt-bundle --version
+
+    - name: Run apt-bundle check
+      if: inputs.mode == 'check'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Checking packages from ${{ inputs.file }}..."
+        apt-bundle check --file "${{ inputs.file }}"
+
+    - name: Run apt-bundle install
+      if: inputs.mode == 'install' || inputs.mode == 'install-no-update'
+      shell: bash
+      env:
+        USE_LOCKED: ${{ steps.prepare.outputs.use-locked }}
+      run: |
+        set -euo pipefail
+
+        ARGS="--file ${{ inputs.file }}"
+        if [[ "${{ inputs.mode }}" == "install-no-update" ]]; then
+          ARGS="$ARGS --no-update"
+        fi
+        if [[ "$USE_LOCKED" == "true" ]]; then
+          ARGS="$ARGS --locked"
+        fi
+
+        echo "Installing packages from ${{ inputs.file }}..."
+        sudo apt-bundle $ARGS

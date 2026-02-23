@@ -29,3 +29,5 @@ temp/
 
 # Claude code
 .claude/settings.local.json
+.vscode/
+.local/

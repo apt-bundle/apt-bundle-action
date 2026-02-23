@@ -1,0 +1,3 @@
+# Minimal set for CI: used by .github/workflows/test.yml
+apt curl
+apt jq
