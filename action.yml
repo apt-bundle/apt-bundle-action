@@ -134,16 +134,18 @@ runs:
       shell: bash
       env:
         USE_LOCKED: ${{ steps.prepare.outputs.use-locked }}
+        FILE: ${{ inputs.file }}
+        MODE: ${{ inputs.mode }}
       run: |
         set -euo pipefail
 
-        ARGS="--file ${{ inputs.file }}"
-        if [[ "${{ inputs.mode }}" == "install-no-update" ]]; then
-          ARGS="$ARGS --no-update"
+        EXTRA_ARGS=()
+        if [[ "$MODE" == "install-no-update" ]]; then
+          EXTRA_ARGS+=(--no-update)
         fi
         if [[ "$USE_LOCKED" == "true" ]]; then
-          ARGS="$ARGS --locked"
+          EXTRA_ARGS+=(--locked)
         fi
 
-        echo "Installing packages from ${{ inputs.file }}..."
-        sudo apt-bundle install $ARGS
+        echo "Installing packages from $FILE..."
+        sudo apt-bundle install --file "$FILE" "${EXTRA_ARGS[@]}"
